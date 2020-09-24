@@ -3,7 +3,8 @@ const discord = new Discord.Client();
 const rcon_client = require("rcon-client");
 const fetch = require('node-fetch');
 const config = require('config')
-
+const ioredis = require('ioredis')
+const redis = new ioredis();
 
 // vars
 const rcon_options = {
@@ -15,11 +16,13 @@ const valid_server_ids =  config.get('discord.valid-servers')
 const admin_channel_ids = config.get('discord.admin-channels')
 const whitelist_channel = config.get('discord.whitelist-channel')
 const sponsor_role =      config.get('discord.sponsor-role')
+const admin_role =        config.get('discord.admin-role')
 const discord_token =     config.get('discord.token')
+
+let last_message = {}
 
 // rcon
 const rcon = new rcon_client.Rcon()
-
 
 function rcon_connect() {
   return new Promise(function(resolve, reject) {
@@ -58,6 +61,10 @@ function fromAdminChannel(id) {
   return admin_channel_ids.includes(id)
 }
 
+function hasAdminRole(guild_object, user_object) {
+  return checkUserForRole(guild_object, user_object, admin_role)
+}
+
 function cleanString(string) {
   // Strips Minecraft control codes:
   return string.replace(/B\'./g, "")
@@ -90,6 +97,17 @@ discord.on('message', msg => {
   if (!validateServer(msg.channel.guild.id)) {
     console.error(`Invalid server - looks like we're on ${msg.guild.id} (${msg.guild.name})`)
     return
+  }
+
+  // Rate limiter
+  if (msg.content.startsWith('!')) {
+    if (last_message[msg.author.id]) {
+      if ( Math.floor(Date.now() / 1000) - last_message[msg.author.id] < 5) {
+        console.log(`${msg.author.username}#${msg.author.discriminator} is rate limited`)
+        return
+      }
+    }
+    last_message[msg.author.id] = Math.floor(Date.now() / 1000)
   }
 
   // Specific channel checks
@@ -128,15 +146,21 @@ discord.on('message', msg => {
           { max: 1, time: 300000 })
           .then(collected => {
             if (collected.first().emoji.name == '✅') {
-              sponsor_user.send(`You have now sponsored ${msg.author.username}#${msg.author.discriminator} (${message[1]}) on the server. You are responsible for them following the rules. Please ensure they do!`)
-              console.log(`${sponsor_user.username}#${sponsor_user.discriminator} has sponsored ${msg.author.username}#${msg.author.discriminator} (${message[1]})`)
               rcon_send(`whitelist add ${message[1]}`)
               .then( (result) => {
                 if (result.includes("already whitelisted")) {
                   msg.author.send(`Error adding you to the whitelist, you're already on the whitelist!`)
                   return
                 }
+                sponsor_user.send(`You have now sponsored ${msg.author.username}#${msg.author.discriminator} (${message[1]}) on the server. You are responsible for them following the rules. Please ensure they do!`)
+                console.log(`${sponsor_user.username}#${sponsor_user.discriminator} has sponsored ${msg.author.username}#${msg.author.discriminator} (${message[1]})`)
                 msg.author.send(`You have been whitelisted. Please check the #rules channel to see connection information. Please note that ${sponsor_user.username}#${sponsor_user.discriminator} risks being banned if you do not follow the rules. Have fun!`)
+
+                redis.hmset(`sponsors::${uid}`, {
+                  'sponsor_name': `${sponsor_user.username}#${sponsor_user.discriminator}`,
+                  'sponsor_id': sponsor_user.id,
+                  'minecraft_name': message[1]
+                })
                 return
               })
               .catch( (err) => {
@@ -171,12 +195,41 @@ discord.on('message', msg => {
 
   ///// Admin commands
   if (msg.content === '!whiteytest') {
-    if (!fromAdminChannel(msg.channel.id)) {
-        console.log(`${msg.author.username}#${msg.author.discriminator} tried to run ${msg.content} in ${msg.channel.name}, denied`)
+    //if (!fromAdminChannel(msg.channel.id)) {
+    if (!hasAdminRole(msg.channel.guild, msg.author)) {
+        //console.log(`${msg.author.username}#${msg.author.discriminator} tried to run ${msg.content} in ${msg.channel.name}, denied`)
         return
     }
     msg.reply("Correct channel!")
     return
+  }
+
+  if (msg.content.startsWith('!adminsponsor')) {
+    if (!hasAdminRole(msg.channel.guild, msg.author)) {
+      console.log(`${msg.author.username}#${msg.author.discriminator} tried to run ${msg.content} in ${msg.channel.name}, denied`)
+      return
+    }
+    message = msg.content.split(' ')
+    if (message.length != 2) {
+      msg.reply(`Syntax is ${message[0]} <minecraft-username>`)
+      return
+    }
+    getMinecraftIdFromPlayerName(message[1])
+    .then( (uid) => {
+      rcon_send(`whitelist add ${message[1]}`)
+      .then( (result) => {
+        if (result.includes("already whitelisted")) {
+          msg.reply(`Error adding ${message[1]} to the whitelist, they're already on the whitelist!`)
+          return
+        }
+        msg.reply(`${message[1]} is now whitelisted, with you listed as their sponsor.`)
+        redis.hmset(`sponsors::${uid}`, {
+          'sponsor_name': `${msg.author.username}#${msg.author.discriminator}`,
+          'sponsor_id': msg.author.id,
+          'minecraft_name': message[1]
+        })
+      });
+    });
   }
 
 
@@ -193,17 +246,32 @@ discord.on('message', msg => {
         msg.reply("Error running command")
     });
   }
-  if (msg.content === '!whitelist') {
-    rcon_send("whitelist add WhiteyDude")
-    .then( (response) => {
-        let clean_response = cleanString(response)
-        msg.reply(clean_response);
+
+  if (msg.content.startsWith('!sponsor')) {
+    message = msg.content.split(' ')
+    if (message.length != 2) {
+      msg.reply(`Syntax is ${message[0]} <minecraft-username>`)
+      return
+    }
+    getMinecraftIdFromPlayerName(message[1])
+    .then( (uid) => {
+      redis.hgetall(`sponsors::${uid}`)
+      .then( (result) => {
+        name = (message[1] == result['minecraft_name']) ? message[1] : `${message[1]}/${result['minecraft_name']}`
+        msg.reply(`Sponsor for ${name} was ${result['sponsor_name']}.`)
         return
+      })
+      .catch( (err) => {
+        // Assuming it's always the UID not existing in the list
+        console.log(err)
+        msg.reply(`This Minecraft user has not been sponsored on the server.`)
+      })
     })
     .catch( (err) => {
-        console.warn("Error running /whitelist on server:", err)
-        msg.reply("Error running command")
-    });
+      console.log(err)
+      msg.reply('Invalid Minecraft username provided, please check the spelling and try again.')
+      return
+    })
   }
 });
   
