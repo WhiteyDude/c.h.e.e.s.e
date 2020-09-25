@@ -147,30 +147,15 @@ discord.on('message', msg => {
           { max: 1, time: 300000 })
           .then(collected => {
             if (collected.first().emoji.name == '✅') {
-              rcon_send(`whitelist add ${message[1]}`)
-              .then( (result) => {
-                if (result.includes("already whitelisted")) {
-                  msg.author.send(`Error adding you to the whitelist, you're already on the whitelist!`)
-                  return
-                }
+              addUserToWhitelist(uid, message[1], msg.member, msg.mentions.members.first())
+              .then( (response) => {
                 msg.member.roles.add(msg.guild.roles.cache.get(pleb_role))
                 sponsor_user.send(`You have now sponsored ${msg.author.username}#${msg.author.discriminator} (${message[1]}) on the server. You are responsible for them following the rules. Please ensure they do!`)
                 console.log(`${sponsor_user.username}#${sponsor_user.discriminator} has sponsored ${msg.author.username}#${msg.author.discriminator} (${message[1]})`)
                 msg.author.send(`You have been whitelisted. Please check the #rules channel to see connection information. Please note that ${sponsor_user.username}#${sponsor_user.discriminator} risks being banned if you do not follow the rules. Have fun!`)
-
-                redis.hmset(`player::${uid}`, {
-                  'discord_name': `${msg.author.username}#${msg.author.discriminator}`,
-                  'discord_id': msg.member.id,
-                  'sponsor_name': `${sponsor_user.username}#${sponsor_user.discriminator}`,
-                  'sponsor_id': sponsor_user.id,
-                  'minecraft_name': message[1]
-                })
-                return
               })
-              .catch( (err) => {
-                console.log(err)
-                msg.author.send(`Error adding you to the whitelist. Please notify an admin in #general!`)
-                return
+              .catch( (response) => {
+                msg.reply(response)
               })
             }
             else {
@@ -200,7 +185,7 @@ discord.on('message', msg => {
   ///// Admin commands
   if (msg.content === '!whiteytest') {
     //if (!fromAdminChannel(msg.channel.id)) {
-    if (!hasAdminRole(msg.author)) {
+    if (!hasAdminRole(msg.member)) {
         //console.log(`${msg.author.username}#${msg.author.discriminator} tried to run ${msg.content} in ${msg.channel.name}, denied`)
         return
     }
@@ -209,34 +194,58 @@ discord.on('message', msg => {
   }
 
   if (msg.content.startsWith('!adminsponsor')) {
-    if (!hasAdminRole(msg.author)) {
+    if (!hasAdminRole(msg.member)) {
       console.log(`${msg.author.username}#${msg.author.discriminator} tried to run ${msg.content} in ${msg.channel.name}, denied`)
       return
     }
     message = msg.content.split(' ')
-    if (message.length != 2) {
-      msg.reply(`Syntax is ${message[0]} <minecraft-username>`)
+    if (message.length != 3 || msg.mentions.members.size != 1) {
+      msg.reply(`Syntax is ${message[0]} <minecraft-username> <tagged-discord-user>`)
       return
     }
     getMinecraftIdFromPlayerName(message[1])
     .then( (uid) => {
-      rcon_send(`whitelist add ${message[1]}`)
+      user = msg.mentions.members.first()
+      addUserToWhitelist(uid, message[1], user, msg.member)
+      .then( (result) => {
+        user.roles.add(msg.guild.roles.cache.get(pleb_role))
+        console.log(`${msg.member.user.username}#${msg.member.user.discriminator} has sponsored ${user.user.username}#${user.user.discriminator} (${message[1]})`)
+        msg.reply(`You have sponsored ${message[1]} and they're now whitelisted. They also have the Pleb role.`)
+      })
+      .catch( (result) => {
+        msg.reply(result)
+      })
+    })
+    .catch( (err) => {
+      console.warn(err)
+      msg.reply(`The Minecraft username you provided was invalid. Please check and try again!`)
+    })
+    ;
+  }
+
+  function addUserToWhitelist(minecraft_uid, minecraft_username, member, sponsor_member) {
+    return new Promise(function(resolve, reject) {
+      rcon_send(`whitelist add ${minecraft_username}`)
       .then( (result) => {
         if (result.includes("already whitelisted")) {
-          msg.reply(`Error adding ${message[1]} to the whitelist, they're already on the whitelist!`)
-          return
+          reject(`Error adding ${minecraft_username} to the whitelist, they're already on the whitelist!`)
         }
         msg.member.roles.add(msg.guild.roles.cache.get(pleb_role))
-        msg.reply(`${message[1]} is now whitelisted, with you listed as their sponsor.`)
-        redis.hmset(`sponsors::${uid}`, {
-          'sponsor_name': `${msg.author.username}#${msg.author.discriminator}`,
-          'sponsor_id': msg.author.id,
-          'minecraft_name': message[1]
+        redis.hmset(`player::${minecraft_uid}`, {
+          'discord_name': `${member.user.username}#${member.user.discriminator}`,
+          'discord_id': member.user.id,
+          'sponsor_name': `${sponsor_member.user.username}#${sponsor_member.user.discriminator}`,
+          'sponsor_id': sponsor_member.user.id,
+          'minecraft_name': minecraft_username
         })
+        resolve(true)
+      })
+      .catch( (err) => {
+        console.log(err)
+        reject(`General error adding ${minecraft_username} to the whitelist. Please contact an admin in #help`)
       });
     });
   }
-
 
   ///// Normal user commands
   if (msg.content === '!who') {
