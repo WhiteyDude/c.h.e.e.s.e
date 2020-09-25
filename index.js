@@ -16,6 +16,7 @@ const valid_server_ids =  config.get('discord.valid-servers')
 const admin_channel_ids = config.get('discord.admin-channels')
 const whitelist_channel = config.get('discord.whitelist-channel')
 const sponsor_role =      config.get('discord.sponsor-role')
+const pleb_role =         config.get('discord.pleb-role')
 const admin_role =        config.get('discord.admin-role')
 const discord_token =     config.get('discord.token')
 
@@ -61,8 +62,8 @@ function fromAdminChannel(id) {
   return admin_channel_ids.includes(id)
 }
 
-function hasAdminRole(guild_object, user_object) {
-  return checkUserForRole(guild_object, user_object, admin_role)
+function hasAdminRole(user_object) {
+  return checkUserForRole(user_object, admin_role)
 }
 
 function cleanString(string) {
@@ -70,8 +71,8 @@ function cleanString(string) {
   return string.replace(/B\'./g, "")
 }
 
-function checkUserForRole(guild_object, user_object, role_id) {
-  return guild_object.member(user_object)['_roles'].includes(role_id)
+function checkUserForRole(user_object, role_id) {
+  return user_object.roles.cache.has(role_id)
 }
 
 function getMinecraftIdFromPlayerName(playername) {
@@ -120,14 +121,14 @@ discord.on('message', msg => {
       msg.author.send(`Your message was deleted in ${msg.channel.name} due to bad formatting. Try again!`)
       return
     }
-    if (!checkUserForRole(msg.channel.guild, msg.author, sponsor_role)) {
+    if (checkUserForRole(msg.member, sponsor_role)) {
       msg.delete().then(msg => console.log(`Deleted message from ${msg.author.username}#${msg.author.discriminator} as they already had the sponsor role`))
       msg.author.send(`Your message was deleted in ${msg.channel.name} as you're already whitelisted!`)
       return
     }
     getMinecraftIdFromPlayerName(message[1])
     .then( (uid) => {
-      if (!checkUserForRole(msg.channel.guild, msg.mentions.users.first(), sponsor_role)) {
+      if (!checkUserForRole(msg.mentions.members.first(), sponsor_role)) {
         msg.delete().then(msg => console.log(`Deleted message from ${msg.author.username}#${msg.author.discriminator} due to bad sponsor`))
         msg.author.send(`Your message was deleted in ${msg.channel.name} as you did not tag a valid sponsor to sponsor you. The sponsor must have the "Lewser" role on the server!`)
         return
@@ -152,6 +153,7 @@ discord.on('message', msg => {
                   msg.author.send(`Error adding you to the whitelist, you're already on the whitelist!`)
                   return
                 }
+                msg.member.roles.add(msg.guild.roles.cache.get(pleb_role))
                 sponsor_user.send(`You have now sponsored ${msg.author.username}#${msg.author.discriminator} (${message[1]}) on the server. You are responsible for them following the rules. Please ensure they do!`)
                 console.log(`${sponsor_user.username}#${sponsor_user.discriminator} has sponsored ${msg.author.username}#${msg.author.discriminator} (${message[1]})`)
                 msg.author.send(`You have been whitelisted. Please check the #rules channel to see connection information. Please note that ${sponsor_user.username}#${sponsor_user.discriminator} risks being banned if you do not follow the rules. Have fun!`)
@@ -196,7 +198,7 @@ discord.on('message', msg => {
   ///// Admin commands
   if (msg.content === '!whiteytest') {
     //if (!fromAdminChannel(msg.channel.id)) {
-    if (!hasAdminRole(msg.channel.guild, msg.author)) {
+    if (!hasAdminRole(msg.author)) {
         //console.log(`${msg.author.username}#${msg.author.discriminator} tried to run ${msg.content} in ${msg.channel.name}, denied`)
         return
     }
@@ -205,7 +207,7 @@ discord.on('message', msg => {
   }
 
   if (msg.content.startsWith('!adminsponsor')) {
-    if (!hasAdminRole(msg.channel.guild, msg.author)) {
+    if (!hasAdminRole(msg.author)) {
       console.log(`${msg.author.username}#${msg.author.discriminator} tried to run ${msg.content} in ${msg.channel.name}, denied`)
       return
     }
@@ -222,6 +224,7 @@ discord.on('message', msg => {
           msg.reply(`Error adding ${message[1]} to the whitelist, they're already on the whitelist!`)
           return
         }
+        msg.member.roles.add(msg.guild.roles.cache.get(pleb_role))
         msg.reply(`${message[1]} is now whitelisted, with you listed as their sponsor.`)
         redis.hmset(`sponsors::${uid}`, {
           'sponsor_name': `${msg.author.username}#${msg.author.discriminator}`,
