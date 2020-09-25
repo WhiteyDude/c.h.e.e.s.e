@@ -158,7 +158,9 @@ discord.on('message', msg => {
                 console.log(`${sponsor_user.username}#${sponsor_user.discriminator} has sponsored ${msg.author.username}#${msg.author.discriminator} (${message[1]})`)
                 msg.author.send(`You have been whitelisted. Please check the #rules channel to see connection information. Please note that ${sponsor_user.username}#${sponsor_user.discriminator} risks being banned if you do not follow the rules. Have fun!`)
 
-                redis.hmset(`sponsors::${uid}`, {
+                redis.hmset(`player::${uid}`, {
+                  'discord_name': `${msg.author.username}#${msg.author.discriminator}`,
+                  'discord_id': msg.member.id,
                   'sponsor_name': `${sponsor_user.username}#${sponsor_user.discriminator}`,
                   'sponsor_id': sponsor_user.id,
                   'minecraft_name': message[1]
@@ -258,7 +260,7 @@ discord.on('message', msg => {
     }
     getMinecraftIdFromPlayerName(message[1])
     .then( (uid) => {
-      redis.hgetall(`sponsors::${uid}`)
+      redis.hgetall(`player::${uid}`)
       .then( (result) => {
         name = (message[1] == result['minecraft_name']) ? message[1] : `${message[1]}/${result['minecraft_name']}`
         msg.reply(`Sponsor for ${name} was ${result['sponsor_name']}.`)
