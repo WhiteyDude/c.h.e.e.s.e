@@ -1,2 +1,4 @@
-* Add Pleb role during sponsor process (both self managed and admin)
-* Check `checkUserForRole` call in sponsor, as it doesn't seem to be detecting the sponsor role
+* Move functions out into individual modules
+* Clean up inconsistencies in accessing users/members/guild roles etc
+* Add consistent logging package with timestamping
+* Add proper `pm2` config file
